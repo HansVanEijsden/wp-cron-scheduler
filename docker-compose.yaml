@@ -1,0 +1,19 @@
+services:
+  cron-scheduler:
+    build: .
+    container_name: wp-cron-scheduler
+    volumes:
+      - /opt/wp-cron-scheduler/sites.json:/config/sites.json:ro   # leesbaar mounten
+    ports:
+      - "8080:8080"   # optioneel, voor healthcheck (niet extern nodig)
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 150s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

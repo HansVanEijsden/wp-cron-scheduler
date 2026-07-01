@@ -1,0 +1,14 @@
+[
+  {
+    "url": "https://www.example.com/wp-cron.php?doing_wp_cron",
+    "interval": 900
+  },
+  {
+    "url": "https://example.nl/wp-cron.php?doing_wp_cron",
+    "interval": 300
+  },
+  {
+    "url": "https://example.org/wp-cron.php?doing_wp_cron",
+    "interval": 900
+  }
+]
