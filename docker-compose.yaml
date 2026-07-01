@@ -2,6 +2,8 @@ services:
   cron-scheduler:
     build: .
     container_name: wp-cron-scheduler
+    networks:
+      - cronnet
     volumes:
       - /opt/wp-cron-scheduler/sites.json:/config/sites.json:ro   # leesbaar mounten
     ports:
@@ -17,3 +19,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  cronnet:
+    driver: bridge
+    enable_ipv6: true
