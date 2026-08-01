@@ -5,7 +5,7 @@ services:
     networks:
       - cronnet
     volumes:
-      - /opt/wp-cron-scheduler/sites.json:/config/sites.json:ro   # leesbaar mounten
+      - /opt/wp-cron-scheduler/sites.json:/config/sites.json:ro   # mounted read-only
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

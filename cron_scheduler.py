@@ -7,12 +7,11 @@ import hashlib
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
-from datetime import datetime
 
 # ---------- config ----------
 CONFIG_PATH = "/config/sites.json"
 HEALTH_PORT = 8080
-REQUEST_TIMEOUT = 30  # seconden
+REQUEST_TIMEOUT = 30  # seconds
 
 # ---------- logging ----------
 logging.basicConfig(
@@ -40,12 +39,12 @@ def start_health_server():
 
 # ---------- site worker ----------
 def run_site_worker(url, interval):
-    # Vaste offset op basis van hash van de URL (zodat de starttijden goed verdeeld zijn)
+    # Fixed offset based on the URL hash (spreads start times evenly)
     hash_digest = hashlib.md5(url.encode()).hexdigest()
     offset = int(hash_digest, 16) % interval
-    logger.info(f"Site {url} start met offset {offset}s (interval {interval}s)")
+    logger.info(f"Site {url} starts with offset {offset}s (interval {interval}s)")
 
-    # Eerste sleep om te spreiden
+    # Initial sleep to spread the requests
     time.sleep(offset)
 
     while True:
@@ -62,45 +61,45 @@ def run_site_worker(url, interval):
             duration = time.time() - start_time
             logger.error(f"ERROR {url} -> {e} (%.2fs)" % duration)
 
-        # Bepaal jitter: maximaal 4 minuten, maar niet meer dan interval/2
+        # Determine jitter: max 4 minutes, but no more than interval/2
         max_jitter = min(240, interval * 0.4)  # 240s = 4 min
         jitter = random.uniform(-max_jitter, max_jitter)
-        sleep_time = max(1, interval + jitter)  # nooit negatief
+        sleep_time = max(1, interval + jitter)  # never negative
         logger.debug(f"Next run for {url} in {sleep_time:.1f}s")
         time.sleep(sleep_time)
 
 # ---------- main ----------
 def main():
-    # Lees config
+    # Read config
     try:
         with open(CONFIG_PATH, "r") as f:
             sites = json.load(f)
     except Exception as e:
-        logger.error(f"Kan config niet laden: {e}")
+        logger.error(f"Cannot load config: {e}")
         return
 
-    # Start healthcheck server in aparte thread
+    # Start healthcheck server in a separate thread
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
 
-    # Start voor elke site een worker thread
+    # Start a worker thread for each site
     threads = []
     for site in sites:
         url = site.get("url")
         interval = site.get("interval")
         if not url or not interval:
-            logger.warning("Ongeldige site config (missen url of interval), overgeslagen")
+            logger.warning("Invalid site config (missing url or interval), skipped")
             continue
         t = threading.Thread(target=run_site_worker, args=(url, interval), daemon=True)
         t.start()
         threads.append(t)
 
-    # Houd de hoofdthread in leven (workers zijn daemon, dus we moeten wachten)
+    # Keep the main thread alive (workers are daemons, so we must wait)
     try:
         for t in threads:
             t.join()
     except KeyboardInterrupt:
-        logger.info("Gestopt door gebruiker")
+        logger.info("Stopped by user")
 
 if __name__ == "__main__":
     main()
