@@ -1,0 +1,8 @@
+.git
+.github
+.gitattributes
+AGENTS.md
+LICENSE
+README.md
+docker-compose.yaml
+sites.example.json
