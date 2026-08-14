@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY cron_scheduler.py .
 
-# Niet-root user (veiligheid)
+# Non-root user (safety)
 RUN useradd -m -u 1000 scheduler && chown -R scheduler:scheduler /app
 USER scheduler
 

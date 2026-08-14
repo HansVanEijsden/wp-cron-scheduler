@@ -43,7 +43,7 @@ Each entry requires `url` and `interval` (seconds). Entries missing either are s
 - Runs as non-root user `scheduler` (uid 1000).
 - Real config is mounted read-only from the host: `/opt/wp-cron-scheduler/sites.json:/config/sites.json:ro`.
 - Healthcheck curls `http://localhost:8080/health` (interval 150s).
-- `Dockerfile` uses `python:3-slim` and installs `curl` (needed by the healthcheck).
+- `Dockerfile` uses `python:3.14-slim` (auto-bumped by the update-deps workflow) and installs `curl` (needed by the healthcheck).
 
 ## Pitfalls
 
