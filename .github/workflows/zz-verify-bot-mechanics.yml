@@ -1,0 +1,40 @@
+name: zz verify bot PR mechanics
+
+# Throwaway workflow that exists only on the test/verify-head branch. It proves
+# that the Actions GITHUB_TOKEN can create and squash-merge a pull request, using
+# the exact gh commands that update-deps.yml runs. Never merged to main.
+
+on:
+  push:
+    branches: [test/verify-head]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HEAD_BRANCH: test/verify-head
+      BASE_BRANCH: test/verify-base
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create and merge a throwaway PR
+        run: |
+          set -euo pipefail
+          gh pr create --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --title "test: verify bot PR mechanics (throwaway)" \
+            --body "Throwaway check of 'gh pr create' + 'gh pr merge' with GITHUB_TOKEN. Safe to ignore and close." \
+            --label dependencies
+
+          PR=$(gh pr list --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+          echo "located open PR: ${PR}"
+          echo "state before merge: $(gh pr view "$HEAD_BRANCH" --json state --jq .state)"
+
+          gh pr merge --squash "$HEAD_BRANCH" || gh pr merge --auto --squash "$HEAD_BRANCH"
+
+          echo "state after merge: $(gh pr view "$HEAD_BRANCH" --json state --jq .state)"
+          echo "VERIFY_OK"
