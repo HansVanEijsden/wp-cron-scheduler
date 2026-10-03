@@ -148,10 +148,14 @@ jobs:
             exit 1
           fi
 
-          # Enable auto-merge here as well: events caused by GITHUB_TOKEN do not
-          # start new workflow runs, so dependabot-automerge.yml never runs for
-          # this PR (its pull_request_target trigger is suppressed).
+          # Merge here as well: events caused by GITHUB_TOKEN do not start new
+          # workflow runs, so dependabot-automerge.yml never runs for this PR
+          # (its pull_request_target trigger is suppressed). Merge directly and
+          # only fall back to --auto: this repository has no required status
+          # checks, and GitHub rejects enablePullRequestAutoMerge on a PR that
+          # is already in a clean state.
           if [[ "$(gh pr view "$BRANCH" --json state --jq .state)" == "OPEN" ]]; then
-            gh pr merge --auto --squash "$BRANCH" \
-              || echo "::warning::Could not enable auto-merge (is auto-merge enabled for this repository?)"
+            gh pr merge --squash "$BRANCH" \
+              || gh pr merge --auto --squash "$BRANCH" \
+              || echo "::warning::Could not merge the pull request; please merge branch $BRANCH by hand."
           fi
