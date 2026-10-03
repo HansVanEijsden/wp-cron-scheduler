@@ -1,7 +1,7 @@
 name: Update base image (python)
 
 # Daily (and on demand): bumps the python base image
-# (FROM python:3.x-slim) to the latest 3.x-slim tag and opens/updates a
+# (FROM python:3.x-slim) to the latest final 3.x-slim tag and opens/updates a
 # single PR (branch bot/update-base-image, label "dependencies") which is
 # auto-merged by the dependabot-automerge workflow.
 #
@@ -30,13 +30,47 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      # Probe upwards from the version pinned in the Dockerfile instead of
+      # scanning the Docker Hub "recently updated" list: that list is a moving
+      # window of 100 tags, so a quiet day could push the newest -slim tag out
+      # of it and make the workflow suggest an *older* minor (3.13 while 3.14
+      # was pinned). Only tags that really exist are ever proposed.
       - name: Detect latest python
         id: detect
         run: |
           set -euo pipefail
-          LAT=$(curl -fsSL "https://hub.docker.com/v2/repositories/library/python/tags?name=3&page_size=100&ordering=last_updated" \
-            | python3 -c "import sys,json,re; tags=[t['name'] for t in json.load(sys.stdin)['results']]; f=[t for t in tags if re.fullmatch(r'3\.\d+-slim',t)]; print(sorted(f,key=lambda x:[int(i) for i in x.split('-')[0].split('.')])[-1].split('-')[0])")
-          echo "image_latest=$LAT" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          import urllib.request
+
+          TAGS = "https://hub.docker.com/v2/repositories/library/python/tags"
+
+          with open("Dockerfile", encoding="utf-8") as fh:
+              dockerfile = fh.read()
+          match = re.search(r"^FROM\s+python:([0-9]+\.[0-9]+)-slim", dockerfile, re.M)
+          if match is None:
+              raise SystemExit("Dockerfile has no 'FROM python:<major>.<minor>-slim' line")
+          major, minor = (int(part) for part in match.group(1).split("."))
+
+
+          def tag_exists(minor_number):
+              """True if the exact tag '<major>.<minor>-slim' exists on Docker Hub."""
+              tag = f"{major}.{minor_number}-slim"
+              url = f"{TAGS}?name={tag}&page_size=25"
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  names = [item["name"] for item in json.load(response)["results"]]
+              return tag in names
+
+
+          # Final -slim tags appear only once a release is out (while only
+          # 3.15.0rc2 exists there is no 3.15-slim, just 3.15-rc), so the
+          # highest existing tag newer than the pinned one is the target.
+          while minor < 60 and tag_exists(minor + 1):
+              minor += 1
+
+          print(f"image_latest={major}.{minor}")
+          PY
 
       - name: Apply bump and open/update PR
         env:
@@ -46,9 +80,19 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
 
-          CUR=$(sed -n 's/^FROM python:\([0-9.]*\)-slim.*/\1/p' Dockerfile | head -1)
-          if [[ -z "${IMG_LATEST:-}" || "$IMG_LATEST" == "$CUR" ]]; then
-            echo "Nothing to do: python=$CUR (current)."
+          pinned_from() {
+            sed -n 's/^FROM python:\([0-9.]*\)-slim.*/\1/p' Dockerfile | head -1
+          }
+
+          BASE=$(pinned_from)
+          LAT="${IMG_LATEST:-}"
+          if [[ -z "$BASE" || -z "$LAT" || "$LAT" == "$BASE" ]]; then
+            echo "Nothing to do: python=${BASE:-unknown} is current."
+            exit 0
+          fi
+          # Safety net: never move to an older minor than the pinned one.
+          if [[ "$(printf '%s\n%s\n' "$BASE" "$LAT" | sort -V | tail -1)" != "$LAT" ]]; then
+            echo "Refusing to downgrade python ${BASE} -> ${LAT}."
             exit 0
           fi
 
@@ -56,12 +100,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # The repo ruleset blocks force-push (non_fast_forward) and branch
-          # deletion. Reuse the branch with fast-forward-only pushes: merge
-          # main into it, then add the bump commit on top.
+          # The repo ruleset blocks force-push (non_fast_forward), so reuse the
+          # branch with fast-forward-only pushes: sync it with main, then add
+          # the bump commit on top. 'git fetch origin origin/main' used to fail
+          # here ("couldn't find remote ref origin/main"): origin/main is a
+          # local remote-tracking ref, not a ref on the remote.
           if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
             echo "Branch $BRANCH exists; syncing with main."
-            git fetch origin "$BRANCH" origin/main
+            git fetch --no-tags origin "$BRANCH" main
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git merge --no-edit origin/main || { echo "Merge conflict with main; aborting."; git merge --abort; exit 1; }
           else
@@ -69,17 +115,43 @@ jobs:
             git checkout -b "$BRANCH" origin/main
           fi
 
-          sed -i "s#^FROM python:${CUR}-slim#FROM python:${IMG_LATEST}-slim#" Dockerfile
-          git add Dockerfile
-          git commit -m "chore(deps): bump python base to ${IMG_LATEST}-slim"
-          git push origin "$BRANCH" || { echo "Push rejected (ruleset?)."; exit 1; }
-
-          TITLE="chore(deps): python ${CUR}-slim -> ${IMG_LATEST}-slim"
-          BODY=$(printf 'Automatic update by the update-base-image workflow.\n\n- python base: python:%s-slim -> python:%s-slim\n\nThe auto-merge workflow merges this automatically (squash).' "$CUR" "$IMG_LATEST")
-          if gh pr view "$BRANCH" --json number --jq .number >/dev/null 2>&1; then
-            gh pr edit "$BRANCH" --title "$TITLE" --body "$BODY" --add-label dependencies
-            echo "Existing PR updated (branch $BRANCH)."
+          # Re-read from the working tree: the branch can pin a different
+          # version than main (a left-over branch used to make every later run
+          # fail, so apply the bump to whatever is checked out now).
+          PINNED=$(pinned_from)
+          if [[ "$PINNED" == "$LAT" ]]; then
+            echo "Branch $BRANCH already pins python=${LAT}; no new commit needed."
           else
-            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY" --label dependencies
+            sed -i "s#^FROM python:${PINNED}-slim#FROM python:${LAT}-slim#" Dockerfile
+            git add Dockerfile
+            if git diff --cached --quiet; then
+              echo "Dockerfile unchanged; nothing to commit."
+            else
+              git commit -m "chore(deps): bump python base to ${LAT}-slim"
+              git push origin "$BRANCH" || { echo "Push rejected (ruleset?)."; exit 1; }
+            fi
+          fi
+
+          TITLE="chore(deps): python ${BASE}-slim -> ${LAT}-slim"
+          BODY=$(printf 'Automatic update by the update-base-image workflow.\n\n- python base: python:%s-slim -> python:%s-slim\n\nThe auto-merge workflow merges this automatically (squash).' "$BASE" "$LAT")
+
+          # Look up an *open* PR: a branch can also carry an already merged PR
+          # (the bot branch is reused), and that one must not be edited.
+          PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$PR" ]]; then
+            gh pr edit "$PR" --title "$TITLE" --body "$BODY" --add-label dependencies
+            echo "Existing PR #$PR updated (branch $BRANCH)."
+          elif gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY" --label dependencies; then
             echo "New PR created (branch $BRANCH)."
+          else
+            echo "::error::Could not create the pull request. Repository setting needed: Settings > Actions > General > Workflow permissions > 'Allow GitHub Actions to create and approve pull requests'."
+            exit 1
+          fi
+
+          # Enable auto-merge here as well: events caused by GITHUB_TOKEN do not
+          # start new workflow runs, so dependabot-automerge.yml never runs for
+          # this PR (its pull_request_target trigger is suppressed).
+          if [[ "$(gh pr view "$BRANCH" --json state --jq .state)" == "OPEN" ]]; then
+            gh pr merge --auto --squash "$BRANCH" \
+              || echo "::warning::Could not enable auto-merge (is auto-merge enabled for this repository?)"
           fi
